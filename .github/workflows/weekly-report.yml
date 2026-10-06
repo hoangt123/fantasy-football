@@ -14,6 +14,11 @@
 #
 # Run it now from the Actions tab ("Run workflow"); tick "demo" to try delivery
 # with an invented league before your Yahoo API access is approved.
+#
+# Until the Yahoo secrets are set AND Yahoo approves Fantasy API access, the
+# preflight step marks scheduled runs as skipped (a notice, not a failure), so
+# you won't get failure emails while waiting. Set up locally with:
+#   python -m weekly_report --setup     then check with:   python -m weekly_report --check
 
 name: Weekly Report
 
@@ -37,6 +42,8 @@ concurrency:
 jobs:
   report:
     runs-on: ubuntu-latest
+    outputs:
+      ran: ${{ steps.gate.outputs.run }}
     timeout-minutes: 20
     permissions:
       contents: write
@@ -62,7 +69,21 @@ jobs:
           python-version: "3.12"
 
       # The report only uses the standard library — no pip install needed.
+      - name: Preflight (credentials + Yahoo approval)
+        id: preflight
+        if: inputs.demo != true
+        run: python -m weekly_report --check --ci
+
+      - name: Decide whether to run
+        id: gate
+        env:
+          DEMO: ${{ inputs.demo }}
+          READY: ${{ steps.preflight.outputs.ready }}
+        run: |
+          if [ "$DEMO" = "true" ] || [ "$READY" = "true" ]; then echo "run=true" >> "$GITHUB_OUTPUT"; else echo "run=false" >> "$GITHUB_OUTPUT"; fi
+
       - name: Fetch league data and build report
+        if: steps.gate.outputs.run == 'true'
         env:
           WEEK: ${{ inputs.week }}
           DEMO: ${{ inputs.demo }}
@@ -73,7 +94,7 @@ jobs:
           python -m weekly_report "${args[@]}"
 
       - name: Analyst take (Claude)
-        if: env.HAS_CLAUDE == 'true'
+        if: steps.gate.outputs.run == 'true' && env.HAS_CLAUDE == 'true'
         continue-on-error: true # the report still goes out without it
         uses: anthropics/claude-code-action@v1
         with:
@@ -97,6 +118,7 @@ jobs:
             the report has several leagues, write about the first one only.
 
       - name: Render final report and deliver
+        if: steps.gate.outputs.run == 'true'
         run: |
           site_args=()
           if [ "${{ vars.REPORT_PAGES }}" = "true" ]; then site_args=(--site _site); fi
@@ -104,6 +126,7 @@ jobs:
             --out reports --email "${site_args[@]}"
 
       - name: Upload report files
+        if: steps.gate.outputs.run == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: weekly-report
@@ -111,7 +134,7 @@ jobs:
           retention-days: 30
 
       - name: Commit reports
-        if: vars.REPORT_COMMIT == 'true' && inputs.demo != true
+        if: steps.gate.outputs.run == 'true' && vars.REPORT_COMMIT == 'true' && inputs.demo != true
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
@@ -120,14 +143,14 @@ jobs:
           git push
 
       - name: Upload Pages site
-        if: vars.REPORT_PAGES == 'true'
+        if: steps.gate.outputs.run == 'true' && vars.REPORT_PAGES == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: _site
 
   pages:
     needs: report
-    if: vars.REPORT_PAGES == 'true'
+    if: needs.report.outputs.ran == 'true' && vars.REPORT_PAGES == 'true'
     runs-on: ubuntu-latest
     permissions:
       pages: write

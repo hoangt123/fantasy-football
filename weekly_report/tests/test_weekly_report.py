@@ -211,3 +211,39 @@ def test_player_index_matching():
     assert index.resolve("Mike Williams", "WR", "NYJ") == "3"
     assert index.resolve("Seattle", "DEF", "Sea") == "SEA"
     assert norm_name("D.K. Metcalf") == "dk metcalf"
+
+
+# ---- credentials -------------------------------------------------------------
+
+
+def test_extract_code_accepts_code_or_redirect_url():
+    from weekly_report.credentials import extract_code
+
+    assert extract_code("  abc123 ") == "abc123"
+    assert extract_code("https://localhost:8000/callback?code=xyz789&state=1") == "xyz789"
+
+
+def test_write_env_updates_in_place_and_locks_permissions(tmp_path, monkeypatch):
+    from weekly_report.credentials import read_env, write_env
+
+    env = tmp_path / ".env"
+    env.write_text("# comment\nYAHOO_CLIENT_ID=old\nOTHER=keep\n")
+    monkeypatch.delenv("YAHOO_CLIENT_ID", raising=False)
+    write_env({"YAHOO_CLIENT_ID": "new", "YAHOO_REFRESH_TOKEN": "r1"}, env)
+    text = env.read_text()
+    assert text.startswith("# comment\nYAHOO_CLIENT_ID=new\nOTHER=keep\n")
+    assert read_env(env)["YAHOO_REFRESH_TOKEN"] == "r1"
+    assert oct(env.stat().st_mode & 0o777) == "0o600"
+
+
+def test_ci_check_skips_quietly_without_credentials(tmp_path, monkeypatch, capsys):
+    from weekly_report.credentials import run_check
+
+    for key in ("YAHOO_CLIENT_ID", "YAHOO_CLIENT_SECRET", "YAHOO_REFRESH_TOKEN", "SMTP_HOST"):
+        monkeypatch.delenv(key, raising=False)
+    output = tmp_path / "out"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    assert run_check(ci=True) == 0  # waiting is not a failure in CI
+    assert output.read_text() == "ready=false\n"
+    assert "::notice" in capsys.readouterr().out
+    assert run_check(ci=False) == 2
