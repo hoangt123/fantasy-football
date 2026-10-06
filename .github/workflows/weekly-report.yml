@@ -1,0 +1,140 @@
+# Weekly fantasy report: waiver + trade recommendations, every Tuesday.
+#
+# Tuesday morning is after Monday Night Football and before Yahoo's waivers
+# clear (usually Wednesday), so the waiver picks are still actionable.
+#
+# Required secrets (Settings → Secrets and variables → Actions):
+#   YAHOO_CLIENT_ID, YAHOO_CLIENT_SECRET, YAHOO_REFRESH_TOKEN   (YAHOO_GUID optional)
+# Optional delivery:
+#   Email  – secrets SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, REPORT_EMAIL_TO (REPORT_EMAIL_FROM optional)
+#   Commit – variable REPORT_COMMIT=true  → reports/ is committed to the repo
+#   Pages  – variable REPORT_PAGES=true   → reports published to GitHub Pages (needs REPORT_COMMIT for the archive)
+#   Claude – secret CLAUDE_CODE_OAUTH_TOKEN → adds a short "Analyst take" written by Claude
+# Optional: variable FF_LEAGUE_KEY to pick one league (default: every active league).
+#
+# Run it now from the Actions tab ("Run workflow"); tick "demo" to try delivery
+# with an invented league before your Yahoo API access is approved.
+
+name: Weekly Report
+
+on:
+  schedule:
+    - cron: "0 14 * * 2" # Tuesdays 14:00 UTC (7am PT / 10am ET during DST)
+  workflow_dispatch:
+    inputs:
+      week:
+        description: "Week to report on (blank = upcoming week)"
+        required: false
+      demo:
+        description: "Demo mode: invented league, live projections (no Yahoo needed)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: weekly-report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      YAHOO_CLIENT_ID: ${{ secrets.YAHOO_CLIENT_ID }}
+      YAHOO_CLIENT_SECRET: ${{ secrets.YAHOO_CLIENT_SECRET }}
+      YAHOO_REFRESH_TOKEN: ${{ secrets.YAHOO_REFRESH_TOKEN }}
+      YAHOO_GUID: ${{ secrets.YAHOO_GUID }}
+      FF_LEAGUE_KEY: ${{ vars.FF_LEAGUE_KEY }}
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+      REPORT_EMAIL_TO: ${{ secrets.REPORT_EMAIL_TO }}
+      REPORT_EMAIL_FROM: ${{ secrets.REPORT_EMAIL_FROM }}
+      HAS_CLAUDE: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The report only uses the standard library — no pip install needed.
+      - name: Fetch league data and build report
+        env:
+          WEEK: ${{ inputs.week }}
+          DEMO: ${{ inputs.demo }}
+        run: |
+          args=(--out reports --save-data "$RUNNER_TEMP/league.json")
+          if [ -n "$WEEK" ]; then args+=(--week "$WEEK"); fi
+          if [ "$DEMO" = "true" ]; then args+=(--demo); fi
+          python -m weekly_report "${args[@]}"
+
+      - name: Analyst take (Claude)
+        if: env.HAS_CLAUDE == 'true'
+        continue-on-error: true # the report still goes out without it
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          claude_args: |
+            --allowedTools "Read,Write,Glob"
+            --max-turns 8
+          prompt: |
+            You are a sharp, friendly fantasy football analyst. Read the newest
+            reports/*/*/latest.md (and latest.json in the same folder for numbers).
+
+            Write the "Analyst take" for this week to the file narrative.md in the
+            repository root: 2–3 short plain-text paragraphs, under 180 words, no
+            headings, no bullet lists, no markdown tables.
+
+            Cover, in order: what matters most for this week's matchup and lineup,
+            the waiver move worth prioritizing (and why, in football terms), and
+            whether any trade idea is worth sending. Use only players, numbers and
+            facts that appear in the report — do not invent injuries or news. If
+            the report has several leagues, write about the first one only.
+
+      - name: Render final report and deliver
+        run: |
+          site_args=()
+          if [ "${{ vars.REPORT_PAGES }}" = "true" ]; then site_args=(--site _site); fi
+          python -m weekly_report --from-data "$RUNNER_TEMP/league.json" --narrative narrative.md \
+            --out reports --email "${site_args[@]}"
+
+      - name: Upload report files
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-report
+          path: reports/
+          retention-days: 30
+
+      - name: Commit reports
+        if: vars.REPORT_COMMIT == 'true' && inputs.demo != true
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
+          git add reports/
+          git diff --cached --quiet || git commit -m "Weekly report $(date -u +%Y-%m-%d)"
+          git push
+
+      - name: Upload Pages site
+        if: vars.REPORT_PAGES == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  pages:
+    needs: report
+    if: vars.REPORT_PAGES == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
