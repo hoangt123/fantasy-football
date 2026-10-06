@@ -144,3 +144,9 @@ nohup.out
 oauth_state.json
 session_*.json
 callback_*.html
+
+# Weekly report: keep its tests (the rules above exclude test files) and skip local scratch output
+!weekly_report/tests/
+!weekly_report/tests/*.py
+narrative.md
+_site/

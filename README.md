@@ -21,6 +21,10 @@ Note that Yahoo Fantasy Sports API access now requires manual approval from Yaho
 - Lineup optimization
 - Optional external player-context/enrichment integrations
 
+## Weekly report
+
+`python -m weekly_report` builds a weekly report with waiver-wire and trade recommendations, a lineup check and a matchup preview. A GitHub Action runs it every Tuesday and delivers it as files, email and/or a web page. See [docs/WEEKLY_REPORT.md](docs/WEEKLY_REPORT.md). Try it without Yahoo access: `python -m weekly_report --demo`.
+
 ## MCP tools
 
 The main FastMCP server currently exposes:
