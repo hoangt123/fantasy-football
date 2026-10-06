@@ -41,16 +41,32 @@ Python 3.8+ and the standard library only. Run the tests with `pytest weekly_rep
 
 ## Set up the weekly Action
 
-1. **Get Yahoo Fantasy API access.** Create a Yahoo app (see [INSTALLATION.md](../INSTALLATION.md)), then apply at <https://sports.yahoo.com/developer/access/> with your Client ID. Until it's approved, every Yahoo call fails with `additional_authorization_required`.
-2. **Get a refresh token**: run `python utils/setup_yahoo_auth.py` locally; it writes `YAHOO_REFRESH_TOKEN` to `.env`.
-3. **Add repository secrets** (Settings → Secrets and variables → Actions):
+Everything except Yahoo's approval can be done today. Until approval lands, scheduled runs are **skipped with a notice** (not failed), so you won't get failure emails while waiting.
 
-   | Secret | Value |
+1. **Yahoo app + Fantasy API application.** Create a Yahoo app as a *Web Application* (see [INSTALLATION.md](../INSTALLATION.md)), then apply at <https://sports.yahoo.com/developer/access/> with its Client ID.
+2. **Run the setup wizard** (Python 3.8+, no installs needed):
+
+   ```bash
+   python -m weekly_report --setup
+   ```
+
+   It asks for your Client ID and Secret, opens Yahoo so you can log in, and saves the tokens to `.env` (git-ignored, `chmod 600`). If you set up email, it saves those settings too. With the GitHub CLI installed, it can also upload everything as repository secrets on your `origin` repo. Yahoo issues working tokens before approval, so you can do this now.
+
+   > The redirect URI you enter must match your Yahoo app exactly. The default is `oob`, which shows a code to paste. If you registered a URL such as `https://localhost:8000/callback`, enter that instead, then paste the full address your browser lands on (the page itself may fail to load; that's fine).
+
+3. **Check status any time:**
+
+   ```bash
+   python -m weekly_report --check
+   ```
+
+   | Result | Meaning |
    |---|---|
-   | `YAHOO_CLIENT_ID` | from your Yahoo app |
-   | `YAHOO_CLIENT_SECRET` | from your Yahoo app |
-   | `YAHOO_REFRESH_TOKEN` | from step 2 |
-   | `YAHOO_GUID` | optional; helps identify your team |
+   | ⏳ Fantasy API approval | Tokens work; Yahoo hasn't approved the app yet. Just wait. |
+   | ✅ Leagues: … | Approved; the next Tuesday run will produce a real report. |
+   | ❌ … | Something needs fixing; the message says what. |
+
+   If you'd rather add secrets by hand (Settings → Secrets and variables → Actions): `YAHOO_CLIENT_ID`, `YAHOO_CLIENT_SECRET`, `YAHOO_REFRESH_TOKEN`, and optionally `YAHOO_GUID`.
 
 4. **Pick where the report goes** (any combination):
 
@@ -58,13 +74,13 @@ Python 3.8+ and the standard library only. Run the tests with `pytest weekly_rep
    |---|---|
    | Files (always) | Download the `weekly-report` artifact from each run (kept 30 days). |
    | Committed to the repo | Variable `REPORT_COMMIT=true`; reports land in `reports/<season>/<league>/week-NN.*`. |
-   | Email | Secrets `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `REPORT_EMAIL_TO` (comma-separated). For Gmail: `smtp.gmail.com`, port `587`, and an [App Password](https://myaccount.google.com/apppasswords). |
+   | Email | The wizard's email step, or secrets `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `REPORT_EMAIL_TO`. For Gmail: `smtp.gmail.com`, port `587`, and an [App Password](https://myaccount.google.com/apppasswords). |
    | Web page | Variable `REPORT_PAGES=true`, plus Settings → Pages → Source: **GitHub Actions**. Set `REPORT_COMMIT=true` too, so older weeks stay in the archive. |
    | Claude "Analyst take" | Secret `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) adds a short written summary at the top. |
 
-   Optional variable `FF_LEAGUE_KEY` (e.g. `461.l.123456`) limits the report to one league. Without it you get one report per active league.
+   Optional variable `FF_LEAGUE_KEY` (e.g. `461.l.123456`) limits the report to one league. `--check` lists your league keys once you're approved.
 
-5. **Test it**: Actions → Weekly Report → Run workflow. Tick **demo** to test email and Pages delivery before Yahoo approves your access.
+5. **Test delivery now**: Actions → Weekly Report → Run workflow, with **demo** ticked. Locally, `python -m weekly_report --demo --email` sends a demo report to your inbox.
 
 > **Privacy:** this repository is public. Committed reports and the Pages site show your league's team names and rosters. Use email only, or make the repository private, if that matters to you.
 
@@ -74,6 +90,8 @@ Python 3.8+ and the standard library only. Run the tests with `pytest weekly_rep
 python -m weekly_report [--league KEY] [--week N] [--out reports] [--formats md,html,json]
                         [--email] [--site DIR] [--narrative FILE]
                         [--save-data FILE | --from-data FILE] [--demo]
+python -m weekly_report --setup            # credentials wizard
+python -m weekly_report --check [--ci]     # readiness: exit 0 ready, 2 waiting, 1 broken
 ```
 
 `--save-data` / `--from-data` let you re-render (for example with a narrative added) without calling Yahoo again.
@@ -88,3 +106,4 @@ python -m weekly_report [--league KEY] [--week N] [--out reports] [--formats md,
 | `weekly_report/analysis.py` | Waivers, trades, lineup check, strengths, matchup |
 | `weekly_report/render.py` | Markdown / HTML (inline styles, so it's email-safe) / JSON |
 | `weekly_report/deliver.py` | Files, static site index, SMTP email |
+| `weekly_report/credentials.py` | `--setup` wizard, `--check` readiness report, `.env` handling |

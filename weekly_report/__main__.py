@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from .analysis import build_report
+from .credentials import load_env, run_check, run_setup
 from .deliver import build_site, email_configured, send_email, write_files
 from .model import League
 
@@ -25,7 +26,16 @@ def main(argv=None) -> int:
     parser.add_argument("--save-data", help="Save the fetched league data (JSON) so it can be re-rendered")
     parser.add_argument("--from-data", help="Re-render from a --save-data file instead of calling Yahoo")
     parser.add_argument("--demo", action="store_true", help="Invented league + live Sleeper projections (no Yahoo needed)")
+    parser.add_argument("--setup", action="store_true", help="Interactive credential setup (Yahoo login, email, GitHub secrets)")
+    parser.add_argument("--check", action="store_true", help="Check credentials, Yahoo approval and email; exit 0 ready / 2 waiting / 1 broken")
+    parser.add_argument("--ci", action="store_true", help="With --check: write ready=true|false to $GITHUB_OUTPUT, don't fail while waiting")
     args = parser.parse_args(argv)
+
+    load_env()  # local .env; real environment variables (CI secrets) take precedence
+    if args.setup:
+        return run_setup()
+    if args.check:
+        return run_check(ci=args.ci)
 
     formats = [f.strip() for f in args.formats.split(",") if f.strip()]
     narrative = Path(args.narrative).read_text(encoding="utf-8") if args.narrative and Path(args.narrative).exists() else ""
